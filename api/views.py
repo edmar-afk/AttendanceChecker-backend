@@ -18,12 +18,23 @@ import numpy as np
 class FaceRegisterView(generics.CreateAPIView):
     serializer_class = UserFaceSerializer
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
+        user_id = self.kwargs.get("user_id")
+        uploaded_file = request.FILES.get("face_image")
+
+        if not uploaded_file:
+            return Response({"message": "No face image provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(data={"face_image": uploaded_file, "name": f"User {user_id}"})
+        serializer.is_valid(raise_exception=True)
         instance = serializer.save()
+
         embedding = extract_face_embedding(instance.face_image.path)
         if embedding is not None:
             instance.embedding = embedding.tobytes()
             instance.save()
+
+        return Response({"id": instance.id, "name": instance.name})
 
 class FaceMatchView(generics.CreateAPIView):
     serializer_class = UserFaceSerializer

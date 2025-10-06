@@ -9,7 +9,7 @@ urlpatterns = [
     path('register/', views.RegisterView.as_view(), name='register'),
     path("fingerprints/<int:user_id>/", views.FingerprintGenerateCreateView.as_view(), name="fingerprint-create"),
     
-    path('register-face/', views.FaceRegisterView.as_view(), name='register-face'),
+    path('register-face/<int:user_id>/', views.FaceRegisterView.as_view(), name='register-face'),
     path('match-face/', views.FaceMatchView.as_view(), name='match-face'),
     
     
