@@ -1,25 +1,19 @@
-# utils.py
-import qrcode
-from io import BytesIO
-from django.core.files import File
+import cv2
+import numpy as np
 
-def generate_qr_code(user, pension_status):
-    qr_data = f"Name: {user.first_name} {user.last_name}\n"
-    qr_data += f"Mobile: {user.profile.mobile_num}\n"
-    qr_data += f"Address: {user.profile.address}\n"
-    qr_data += f"Pension Status: {pension_status.status}\n"
-    qr_data += f"Date Submitted: {pension_status.date_submitted.strftime('%Y-%m-%d')}"
+def extract_face_embedding(image_path):
+    img = cv2.imread(image_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=10,
-        border=4,
-    )
-    qr.add_data(qr_data)
-    qr.make(fit=True)
+    if len(faces) == 0:
+        return None
 
-    img = qr.make_image(fill='black', back_color='white')
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    return File(buffer, name=f"{user.username}_qr_code.png")
+    x, y, w, h = faces[0]
+    face = gray[y:y+h, x:x+w]
+    face = cv2.resize(face, (100, 100))
+
+    hist = cv2.calcHist([face], [0], None, [256], [0, 256]).flatten()
+    hist = hist / np.linalg.norm(hist)
+    return hist.astype(np.float32)

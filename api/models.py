@@ -23,13 +23,13 @@ class FingerprintGenerate(models.Model):
         return f"{self.user.username} - {self.device_name or 'Unknown'}"
     
 
-class FaceImage(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="face_image")
-    image = models.ImageField(
-        upload_to="faces/",
-        validators=[FileExtensionValidator(allowed_extensions=["jpg", "jpeg", "png"])]
+class UserFace(models.Model):
+    name = models.CharField(max_length=100)
+    face_image = models.ImageField(
+        upload_to='faces/',
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])]
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    embedding = models.BinaryField()
 
     def __str__(self):
-        return self.user.username
+        return self.name

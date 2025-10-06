@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Profile, FingerprintGenerate, FaceImage
+from .models import Profile, FingerprintGenerate, UserFace
 
 
 
@@ -46,7 +46,12 @@ class FingerprintGenerateSerializer(serializers.ModelSerializer):
         
 
 
-class FaceImageSerializer(serializers.ModelSerializer):
+class UserFaceSerializer(serializers.ModelSerializer):
     class Meta:
-        model = FaceImage
-        fields = ["id", "user", "image", "created_at"]
+        model = UserFace
+        fields = ['id', 'name', 'face_image']
+
+    def validate_face_image(self, value):
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Image size should be less than 5MB")
+        return value

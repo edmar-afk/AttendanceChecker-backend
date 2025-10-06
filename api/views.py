@@ -4,14 +4,59 @@ from rest_framework.permissions import AllowAny
 from rest_framework import status, generics
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .models import Profile, FingerprintGenerate, FaceImage
+from .models import Profile, FingerprintGenerate, UserFace
 from rest_framework.generics import DestroyAPIView
 from django.contrib.auth.models import User
 from rest_framework import permissions
 from django.contrib.auth import get_user_model
-from .serializers import RegisterSerializer, FingerprintGenerateSerializer, FaceImageSerializer
+from .serializers import RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer
 from django.core.files.storage import default_storage
-import face_recognition
+from .utils import extract_face_embedding
+from django.core.files.storage import default_storage
+import numpy as np
+
+class FaceRegisterView(generics.CreateAPIView):
+    serializer_class = UserFaceSerializer
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        embedding = extract_face_embedding(instance.face_image.path)
+        if embedding is not None:
+            instance.embedding = embedding.tobytes()
+            instance.save()
+
+class FaceMatchView(generics.CreateAPIView):
+    serializer_class = UserFaceSerializer
+
+    def create(self, request, *args, **kwargs):
+        uploaded_file = request.FILES['face_image']
+        temp_path = default_storage.save('temp.jpg', uploaded_file)
+        embedding = extract_face_embedding(default_storage.path(temp_path))
+
+        if embedding is None:
+            return Response({"message": "No face detected"}, status=status.HTTP_400_BAD_REQUEST)
+
+        users = UserFace.objects.all()
+        best_score = 0
+        best_user = None
+
+        for user in users:
+            stored_emb = np.frombuffer(user.embedding, dtype=np.float32)
+            score = np.dot(embedding, stored_emb) / (np.linalg.norm(embedding) * np.linalg.norm(stored_emb))
+            if score > best_score:
+                best_score = score
+                best_user = user
+
+        if best_score > 0.75:
+            return Response({
+                "match": True,
+                "user_id": best_user.id,
+                "name": best_user.name,
+                "score": float(best_score)
+            })
+
+        return Response({"match": False, "message": "No match found"})
+    
 
 
 User = get_user_model()
@@ -101,36 +146,3 @@ class FingerprintGenerateCreateView(generics.CreateAPIView):
         return Response(serializer.data, status=201)
     
     
-class FaceImageUploadView(APIView):
-    def post(self, request):
-        serializer = FaceImageSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class FaceRecognitionView(APIView):
-    def post(self, request):
-        if "image" not in request.FILES:
-            return Response({"error": "No image provided"}, status=status.HTTP_400_BAD_REQUEST)
-
-        uploaded_image = request.FILES["image"]
-        path = default_storage.save("temp_faces/" + uploaded_image.name, uploaded_image)
-        uploaded_face = face_recognition.load_image_file(default_storage.path(path))
-        uploaded_encodings = face_recognition.face_encodings(uploaded_face)
-
-        if not uploaded_encodings:
-            return Response({"error": "No face detected"}, status=status.HTTP_400_BAD_REQUEST)
-
-        uploaded_encoding = uploaded_encodings[0]
-
-        for face in FaceImage.objects.all():
-            stored_image = face_recognition.load_image_file(face.image.path)
-            stored_encodings = face_recognition.face_encodings(stored_image)
-            if stored_encodings:
-                match = face_recognition.compare_faces([stored_encodings[0]], uploaded_encoding)
-                if match[0]:
-                    return Response({"user_id": face.user.id}, status=status.HTTP_200_OK)
-
-        return Response({"message": "No match found"}, status=status.HTTP_404_NOT_FOUND)
