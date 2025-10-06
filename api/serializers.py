@@ -43,7 +43,6 @@ class FingerprintGenerateSerializer(serializers.ModelSerializer):
         model = FingerprintGenerate
         fields = ["id", "device_name", "device_id", "created_at"]
         read_only_fields = ["id", "created_at"]
-        
 
 
 class UserFaceSerializer(serializers.ModelSerializer):

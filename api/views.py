@@ -5,15 +5,22 @@ from rest_framework import status, generics
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import Profile, FingerprintGenerate, UserFace
+from django.shortcuts import get_object_or_404
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.generics import DestroyAPIView
 from django.contrib.auth.models import User
-from rest_framework import permissions
+from rest_framework import viewsets, permissions
+from rest_framework.generics import ListAPIView
+from rest_framework import status as drf_status
 from django.contrib.auth import get_user_model
+from .serializers import RegisterSerializer,FingerprintGenerateSerializer
+User = get_user_model()
 from .serializers import RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer
 from django.core.files.storage import default_storage
 from .utils import extract_face_embedding
 from django.core.files.storage import default_storage
 import numpy as np
+
 
 class FaceRegisterView(generics.CreateAPIView):
     serializer_class = UserFaceSerializer
@@ -67,10 +74,9 @@ class FaceMatchView(generics.CreateAPIView):
             })
 
         return Response({"match": False, "message": "No match found"})
-    
 
 
-User = get_user_model()
+
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
@@ -134,26 +140,32 @@ class FingerprintGenerateCreateView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         user_id = self.kwargs.get("user_id")
-        ip = request.META.get("REMOTE_ADDR")
-        user_agent = request.META.get("HTTP_USER_AGENT", "unknown")
-
-        device_id = request.data.get("device_id") or f"{ip}-{user_agent}"
+        device_id = request.data.get("device_id")
 
         try:
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
-            return Response({"detail": "User not found."}, status=404)
+            return Response(
+                {"detail": "User not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
+        # Check if this user already has a fingerprint registered
         if FingerprintGenerate.objects.filter(user=user).exists():
-            return Response({"detail": "Fingerprint already registered."}, status=400)
+            return Response(
+                {"detail": "Fingerprint already registered for this user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        # Optionally enforce 1 device = 1 account rule
         if FingerprintGenerate.objects.filter(device_id=device_id).exists():
-            return Response({"detail": "This device is already tied to another account."}, status=400)
+            return Response(
+                {"detail": "This device is already tied to another account."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        serializer = self.get_serializer(data={"device_id": device_id, **request.data})
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(user=user)
 
-        return Response(serializer.data, status=201)
-    
-    
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
