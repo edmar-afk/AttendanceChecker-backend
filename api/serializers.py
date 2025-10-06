@@ -48,7 +48,7 @@ class FingerprintGenerateSerializer(serializers.ModelSerializer):
 class UserFaceSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserFace
-        fields = ['id', 'name', 'face_image']
+        fields = ['id', 'user', 'name', 'face_image', 'embedding']
 
     def validate_face_image(self, value):
         if value.size > 5 * 1024 * 1024:

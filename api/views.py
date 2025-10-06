@@ -20,52 +20,93 @@ from django.core.files.storage import default_storage
 from .utils import extract_face_embedding
 from django.core.files.storage import default_storage
 import numpy as np
+import uuid
+# Assuming UserFace, User, UserFaceSerializer, and extract_face_embedding are defined elsewhere
+# from .models import UserFace, User
+# from .serializers import UserFaceSerializer
+# from .utils import extract_face_embedding
 
+
+# --- FaceRegisterView (No changes needed, but included for completeness) ---
 
 class FaceRegisterView(generics.CreateAPIView):
     serializer_class = UserFaceSerializer
+    permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
         user_id = self.kwargs.get("user_id")
         uploaded_file = request.FILES.get("face_image")
 
         if not uploaded_file:
-            return Response({"message": "No face image provided"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "No face image provided"}, status=400)
 
-        serializer = self.get_serializer(data={"face_image": uploaded_file, "name": f"User {user_id}"})
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=404)
+
+        serializer = self.get_serializer(data={
+            "face_image": uploaded_file,
+            "name": f"User {user_id}",
+            "user": user.id
+        })
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
 
+        # Make sure the file is fully saved
+        instance.face_image.open()
+        instance.face_image.close()
+
+        # Extract embedding
         embedding = extract_face_embedding(instance.face_image.path)
         if embedding is not None:
             instance.embedding = embedding.tobytes()
             instance.save()
+        else:
+            return Response({"message": "Face could not be detected"}, status=400)
 
         return Response({"id": instance.id, "name": instance.name})
 
+# --- FaceMatchView (Fix applied here) ---
+
 class FaceMatchView(generics.CreateAPIView):
     serializer_class = UserFaceSerializer
+    permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
         uploaded_file = request.FILES['face_image']
         temp_path = default_storage.save('temp.jpg', uploaded_file)
+        # Assuming extract_face_embedding is defined
         embedding = extract_face_embedding(default_storage.path(temp_path))
 
         if embedding is None:
             return Response({"message": "No face detected"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Retrieve all user faces
         users = UserFace.objects.all()
         best_score = 0
         best_user = None
 
         for user in users:
+            # 💡 THE FIX: Check if the user has an embedding stored before trying to use it.
+            if user.embedding is None:
+                continue  # Skip users with missing or failed embeddings
+
+            # Convert the stored bytes back to a NumPy array
             stored_emb = np.frombuffer(user.embedding, dtype=np.float32)
+
+            # Perform similarity calculation (assuming dot product similarity/cosine similarity)
             score = np.dot(embedding, stored_emb) / (np.linalg.norm(embedding) * np.linalg.norm(stored_emb))
+
             if score > best_score:
                 best_score = score
                 best_user = user
 
+        # Clean up temporary file (optional, but good practice)
+        default_storage.delete(temp_path)
+
         if best_score > 0.75:
+            # Assuming a threshold of 0.75 for a successful match
             return Response({
                 "match": True,
                 "user_id": best_user.id,
@@ -134,13 +175,19 @@ class RegisterView(APIView):
 
 
 
+import uuid
+from rest_framework import generics, permissions, status
+from rest_framework.response import Response
+from django.contrib.auth.models import User
+from .models import FingerprintGenerate
+from .serializers import FingerprintGenerateSerializer
+
 class FingerprintGenerateCreateView(generics.CreateAPIView):
     serializer_class = FingerprintGenerateSerializer
     permission_classes = [permissions.AllowAny]
 
     def create(self, request, *args, **kwargs):
         user_id = self.kwargs.get("user_id")
-        device_id = request.data.get("device_id")
 
         try:
             user = User.objects.get(pk=user_id)
@@ -150,21 +197,19 @@ class FingerprintGenerateCreateView(generics.CreateAPIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Check if this user already has a fingerprint registered
         if FingerprintGenerate.objects.filter(user=user).exists():
             return Response(
                 {"detail": "Fingerprint already registered for this user."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Optionally enforce 1 device = 1 account rule
-        if FingerprintGenerate.objects.filter(device_id=device_id).exists():
-            return Response(
-                {"detail": "This device is already tied to another account."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Generate device_id on backend
+        device_id = str(uuid.uuid4())
 
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data={
+            "device_name": "",
+            "device_id": device_id,
+        })
         serializer.is_valid(raise_exception=True)
         serializer.save(user=user)
 

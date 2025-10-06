@@ -38,12 +38,13 @@ class FingerprintGenerate(models.Model):
 
 
 class UserFace(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='faces')
     name = models.CharField(max_length=100)
     face_image = models.ImageField(
         upload_to='faces/',
         validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])]
     )
-    embedding = models.BinaryField()
+    embedding = models.BinaryField(blank=True, null=True)
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.user.username})"
