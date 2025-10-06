@@ -5,10 +5,10 @@ from rest_framework_simplejwt.views import TokenRefreshView
 urlpatterns = [
     path('login/', views.CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+     
+    path('register/', views.RegisterView.as_view(), name='register'),
+    path("fingerprints/<int:user_id>/", views.FingerprintGenerateCreateView.as_view(), name="fingerprint-create"),
     
-    path("fingerprint/begin-register/", views.begin_register, name="begin_register"),
-    path("fingerprint/finish-register/", views.finish_register, name="finish_register"),
-    path("fingerprint/begin-login/", views.begin_login, name="begin_login"),
-    path("fingerprint/finish-login/", views.finish_login, name="finish_login"),
-   
+    path("upload-face/", views.FaceImageUploadView.as_view(), name="upload-face"),
+    path("recognize-face/", views.FaceRecognitionView.as_view(), name="recognize-face"),
 ]

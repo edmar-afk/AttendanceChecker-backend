@@ -4,15 +4,15 @@ from rest_framework.permissions import AllowAny
 from rest_framework import status, generics
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .models import Profile
-from django.shortcuts import get_object_or_404
-from rest_framework.parsers import MultiPartParser, FormParser
+from .models import Profile, FingerprintGenerate, FaceImage
 from rest_framework.generics import DestroyAPIView
 from django.contrib.auth.models import User
-from rest_framework import viewsets, permissions
-from rest_framework.generics import ListAPIView
-from rest_framework import status as drf_status
+from rest_framework import permissions
 from django.contrib.auth import get_user_model
+from .serializers import RegisterSerializer, FingerprintGenerateSerializer, FaceImageSerializer
+from django.core.files.storage import default_storage
+import face_recognition
+
 
 User = get_user_model()
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -47,148 +47,90 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
 
-from rest_framework.permissions import AllowAny
-import base64, os, json
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from rest_framework.decorators import api_view, permission_classes
-from django.contrib.auth.models import User
-from django.contrib.auth import login as auth_login
-from webauthn.helpers.structs import (
-    PublicKeyCredentialCreationOptions,
-    PublicKeyCredentialRequestOptions,
-    AttestationConveyancePreference,
-    AuthenticatorSelectionCriteria,
-    UserVerificationRequirement,
-    RegistrationCredential,
-    AuthenticationCredential,
-)
-import webauthn
-from .models import Profile
-
-RP_ID = "localhost"   # change to your production domain (e.g. "myapp.com")
-FRONTEND_ORIGIN = "http://localhost:3000"  # your React site
-
-# -------------------
-# Begin Registration
-# -------------------
-@csrf_exempt
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def begin_register(request):
-    try:
-        data = json.loads(request.body)
-        email = data.get("email", "guest@example.com")  # fallback if no email
-
-        challenge = os.urandom(32)
-        request.session["registration_challenge"] = base64.urlsafe_b64encode(challenge).decode()
-
-        options = PublicKeyCredentialCreationOptions(
-            rp={"id": RP_ID, "name": "My Django App"},
-            user={
-                # use email as ID (must be bytes)
-                "id": email.encode("utf-8"),
-                "name": email,
-                "displayName": email,
-            },
-            challenge=challenge,
-            pub_key_cred_params=[{"type": "public-key", "alg": -7}],  # ES256
-            authenticator_selection=AuthenticatorSelectionCriteria(
-                user_verification=UserVerificationRequirement.REQUIRED
-            ),
-            attestation=AttestationConveyancePreference.DIRECT,
-        )
-
-        return JsonResponse(options.model_dump(), safe=False)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            return Response({
+                "message": "User registered successfully!",
+                "user": {
+                    "id": user.id,
+                    "first_name": user.first_name,
+                    "username": user.username,
+                    "profile": {
+                        "year_lvl": user.profile.year_lvl,
+                        "course": user.profile.course,
+                        "status": user.profile.status,
+                    }
+                }
+            }, status=status.HTTP_201_CREATED)
+        print(serializer.errors)  # 👈 Add this
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# -------------------
-# Finish Registration
-# -------------------
-@csrf_exempt
-def finish_register(request):
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Not logged in"}, status=403)
-
-    credential = RegistrationCredential.parse_raw(request.body)
-    expected_challenge = base64.urlsafe_b64decode(request.session["registration_challenge"])
-
-    reg = webauthn.verify_registration_response(
-        credential=credential,
-        expected_challenge=expected_challenge,
-        expected_rp_id=RP_ID,
-        expected_origin=FRONTEND_ORIGIN,
-        require_user_verification=True,
-    )
-
-    profile, _ = Profile.objects.get_or_create(user=request.user)
-    profile.credential_id = base64.urlsafe_b64encode(reg.credential_id).decode()
-    profile.public_key = reg.credential_public_key.decode()
-    profile.sign_count = reg.sign_count
-    profile.save()
-
-    return JsonResponse({"status": "ok"})
 
 
-# -------------------
-# Begin Login
-# -------------------
-def begin_login(request):
-    username = request.GET.get("username")
-    try:
-        profile = Profile.objects.get(user__username=username)
-    except Profile.DoesNotExist:
-        return JsonResponse({"error": "User not found"}, status=404)
+class FingerprintGenerateCreateView(generics.CreateAPIView):
+    serializer_class = FingerprintGenerateSerializer
+    permission_classes = [permissions.AllowAny]
 
-    challenge = os.urandom(32)
-    request.session["login_challenge"] = base64.urlsafe_b64encode(challenge).decode()
+    def create(self, request, *args, **kwargs):
+        user_id = self.kwargs.get("user_id")
+        ip = request.META.get("REMOTE_ADDR")
+        user_agent = request.META.get("HTTP_USER_AGENT", "unknown")
 
-    options = PublicKeyCredentialRequestOptions(
-        challenge=challenge,
-        rp_id=RP_ID,
-        allow_credentials=[{
-            "type": "public-key",
-            "id": base64.urlsafe_b64decode(profile.credential_id.encode()),
-        }],
-        user_verification=UserVerificationRequirement.REQUIRED,
-    )
+        device_id = request.data.get("device_id") or f"{ip}-{user_agent}"
 
-    return JsonResponse(options.model_dump())
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=404)
+
+        if FingerprintGenerate.objects.filter(user=user).exists():
+            return Response({"detail": "Fingerprint already registered."}, status=400)
+
+        if FingerprintGenerate.objects.filter(device_id=device_id).exists():
+            return Response({"detail": "This device is already tied to another account."}, status=400)
+
+        serializer = self.get_serializer(data={"device_id": device_id, **request.data})
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=user)
+
+        return Response(serializer.data, status=201)
+    
+    
+class FaceImageUploadView(APIView):
+    def post(self, request):
+        serializer = FaceImageSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# -------------------
-# Finish Login
-# -------------------
-@csrf_exempt
-def finish_login(request):
-    body = json.loads(request.body)
-    username = body.get("username")
+class FaceRecognitionView(APIView):
+    def post(self, request):
+        if "image" not in request.FILES:
+            return Response({"error": "No image provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        profile = Profile.objects.get(user__username=username)
-    except Profile.DoesNotExist:
-        return JsonResponse({"error": "User not found"}, status=404)
+        uploaded_image = request.FILES["image"]
+        path = default_storage.save("temp_faces/" + uploaded_image.name, uploaded_image)
+        uploaded_face = face_recognition.load_image_file(default_storage.path(path))
+        uploaded_encodings = face_recognition.face_encodings(uploaded_face)
 
-    credential = AuthenticationCredential.parse_raw(request.body)
-    expected_challenge = base64.urlsafe_b64decode(request.session["login_challenge"])
+        if not uploaded_encodings:
+            return Response({"error": "No face detected"}, status=status.HTTP_400_BAD_REQUEST)
 
-    auth = webauthn.verify_authentication_response(
-        credential=credential,
-        expected_challenge=expected_challenge,
-        expected_rp_id=RP_ID,
-        expected_origin=FRONTEND_ORIGIN,
-        credential_public_key=profile.public_key.encode(),
-        credential_current_sign_count=profile.sign_count,
-        require_user_verification=True,
-    )
+        uploaded_encoding = uploaded_encodings[0]
 
-    # Update sign count
-    profile.sign_count = auth.new_sign_count
-    profile.save()
+        for face in FaceImage.objects.all():
+            stored_image = face_recognition.load_image_file(face.image.path)
+            stored_encodings = face_recognition.face_encodings(stored_image)
+            if stored_encodings:
+                match = face_recognition.compare_faces([stored_encodings[0]], uploaded_encoding)
+                if match[0]:
+                    return Response({"user_id": face.user.id}, status=status.HTTP_200_OK)
 
-    # Log the user in Django session
-    auth_login(request, profile.user)
-
-    return JsonResponse({"status": "authenticated"})
+        return Response({"message": "No match found"}, status=status.HTTP_404_NOT_FOUND)
