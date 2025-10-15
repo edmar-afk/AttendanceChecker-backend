@@ -42,4 +42,10 @@ urlpatterns = [
     path('attendance/timein-expire/<int:attendance_id>/', views.TimeInExpireView.as_view(), name='timein-expire'),
     
     path('export-attendance/<int:attendance_id>/', views.ExportAttendanceExcelView.as_view(), name='export_attendance_excel'),
+
+
+
+    path('profileUpdate/<int:user_id>/', views.ProfileDetailUpdateView.as_view(), name='profile-detail-update'),
+
+    path('events/', views.EventListCreateView.as_view(), name='events-list-create'),
 ]

@@ -4,13 +4,13 @@ from rest_framework.permissions import AllowAny
 from rest_framework import status, generics
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .models import Profile, FingerprintGenerate, UserFace, Attendance, AttendanceRecord
+from .models import Profile, FingerprintGenerate, UserFace, Attendance, AttendanceRecord, Events
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
 from rest_framework import permissions
 from django.contrib.auth import get_user_model
 User = get_user_model()
-from .serializers import AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
+from .serializers import EventsSerializer, AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
 from django.core.files.storage import default_storage
 from .utils import extract_face_embedding
 from django.core.files.storage import default_storage
@@ -25,6 +25,7 @@ from django.http import HttpResponse
 from datetime import timedelta
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
+from django.http import Http404
 
 # --- FaceRegisterView (No changes needed, but included for completeness) ---
 
@@ -633,3 +634,44 @@ class ExportAttendanceExcelView(APIView):
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         wb.save(response)
         return response
+
+
+class ProfileDetailUpdateView(generics.RetrieveUpdateAPIView):
+    serializer_class = ProfileSerializer
+    lookup_url_kwarg = 'user_id'
+    permission_classes = [AllowAny]
+
+    def get_object(self):
+        user_id = self.kwargs.get(self.lookup_url_kwarg)
+        print("🔍 [DEBUG] Getting profile for user_id:", user_id)
+        try:
+            profile = Profile.objects.get(user__id=user_id)
+            print("✅ [DEBUG] Found profile:", profile)
+            return profile
+        except Profile.DoesNotExist:
+            print("❌ [DEBUG] Profile not found for user_id:", user_id)
+            raise Http404
+
+    def update(self, request, *args, **kwargs):
+        print("🟢 [DEBUG] Update method triggered")
+        print("📦 [DEBUG] Request method:", request.method)
+        print("📥 [DEBUG] Request data:", request.data)
+
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        if not serializer.is_valid():
+            print("❌ [DEBUG] Serializer errors:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        self.perform_update(serializer)
+        print("📤 [DEBUG] Update response data:", serializer.data)
+        return Response(serializer.data)
+
+
+
+
+class EventListCreateView(generics.ListCreateAPIView):
+    queryset = Events.objects.all().order_by('-id')
+    serializer_class = EventsSerializer
+    permission_classes = [AllowAny]
