@@ -7,7 +7,7 @@ from .models import Profile, FingerprintGenerate, UserFace, Attendance, Attendan
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email']
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_superuser']
         extra_kwargs = {
             'username': {'required': False},
             'first_name': {'required': False},
@@ -134,3 +134,54 @@ class EventsSerializer(serializers.ModelSerializer):
     class Meta:
         model = Events
         fields = ['id', 'event_name', 'description', 'date_started']
+        
+        
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', required=False)
+    first_name = serializers.CharField(source='user.first_name', required=False)
+    password = serializers.CharField(write_only=True, required=False, min_length=6)
+
+    class Meta:
+        model = Profile
+        fields = ['username', 'first_name', 'year_lvl', 'course', 'password']
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('user', {})
+        user = instance.user
+
+        if 'username' in user_data:
+            user.username = user_data['username']
+        if 'first_name' in user_data:
+            user.first_name = user_data['first_name']
+
+        # Update password if provided
+        new_password = validated_data.pop('password', None)
+        if new_password:
+            user.set_password(new_password)
+
+        user.save()
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
+    
+    
+
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username')
+    email = serializers.CharField(source='user.email')
+
+    class Meta:
+        model = Profile
+        fields = ['username', 'email', 'year_lvl', 'course', 'schoolId', 'status']
+
+
+class AttendanceRecordFilteredSerializer(serializers.ModelSerializer):
+    user = UserProfileSerializer(source='user.profile', read_only=True)
+
+    class Meta:
+        model = AttendanceRecord
+        fields = ['id', 'user', 'time_in', 'time_out', 'timestamp']

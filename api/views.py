@@ -10,7 +10,7 @@ from django.contrib.auth.models import User
 from rest_framework import permissions
 from django.contrib.auth import get_user_model
 User = get_user_model()
-from .serializers import EventsSerializer, AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
+from .serializers import AttendanceRecordFilteredSerializer, ProfileUpdateSerializer, EventsSerializer, AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
 from django.core.files.storage import default_storage
 from .utils import extract_face_embedding
 from django.core.files.storage import default_storage
@@ -672,6 +672,66 @@ class ProfileDetailUpdateView(generics.RetrieveUpdateAPIView):
 
 
 class EventListCreateView(generics.ListCreateAPIView):
-    queryset = Events.objects.all().order_by('-id')
+    queryset = Events.objects.all().order_by('date_started')
     serializer_class = EventsSerializer
     permission_classes = [AllowAny]
+    
+class EventDetailView(generics.RetrieveUpdateAPIView):
+    queryset = Events.objects.all()
+    serializer_class = EventsSerializer
+    permission_classes = [AllowAny]
+    lookup_field = 'id'
+    
+
+class DeleteEventView(APIView):
+    permission_classes = [AllowAny]
+    
+    def delete(self, request, eventId):
+        try:
+            event = Events.objects.get(id=eventId)
+            event.delete()
+            return Response({"message": "Event deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+        except Events.DoesNotExist:
+            return Response({"error": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+
+class StudentsListView(generics.ListAPIView):
+    queryset = Profile.objects.select_related('user').all()
+    serializer_class = ProfileSerializer
+    permission_classes = [AllowAny]
+    
+class StudentUpdateView(generics.RetrieveUpdateAPIView):
+    serializer_class = ProfileUpdateSerializer
+    permission_classes = [AllowAny]
+
+    def get_object(self):
+        user_id = self.kwargs['id']
+        return Profile.objects.get(user__id=user_id)
+    
+    
+    
+class AttendanceFilteredByProfileView(generics.ListAPIView):
+    serializer_class = AttendanceRecordFilteredSerializer
+
+    def get_queryset(self):
+        attendance_id = self.kwargs.get('attendance_id')
+        year_lvl = self.request.query_params.get('year_lvl')
+        course = self.request.query_params.get('course')
+
+        queryset = AttendanceRecord.objects.filter(attendance_id=attendance_id)
+
+        if year_lvl:
+            queryset = queryset.filter(user__profile__year_lvl=year_lvl)
+        if course:
+            queryset = queryset.filter(user__profile__course=course)
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        attendance_id = kwargs.get('attendance_id')
+        try:
+            Attendance.objects.get(id=attendance_id)
+        except Attendance.DoesNotExist:
+            return Response({"detail": "Attendance not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return super().list(request, *args, **kwargs)

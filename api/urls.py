@@ -48,4 +48,11 @@ urlpatterns = [
     path('profileUpdate/<int:user_id>/', views.ProfileDetailUpdateView.as_view(), name='profile-detail-update'),
 
     path('events/', views.EventListCreateView.as_view(), name='events-list-create'),
+    path('edit-events/<int:id>/', views.EventDetailView.as_view(), name='event-detail'),
+    path('events/delete/<int:eventId>/', views.DeleteEventView.as_view(), name='delete-event'),
+    
+    path('students/', views.StudentsListView.as_view(), name='students-list'),
+    path('students/manage/<int:id>/', views.StudentUpdateView.as_view(), name='student-manage'),
+    
+    path('attendance-filter/<int:attendance_id>/records/', views.AttendanceFilteredByProfileView.as_view(), name='attendance-filtered-records'),
 ]
