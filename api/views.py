@@ -618,13 +618,25 @@ class ExportAttendanceExcelView(APIView):
         wb = Workbook()
         ws = wb.active
         ws.title = "Attendance Records"
-        ws.append(["User First Name", "Time In", "Time Out"])
+
+        ws.append(["School ID", "First Name", "Course", "Year Level", "Time In", "Time Out"])
 
         for record in records:
+            profile = Profile.objects.filter(user=record.user).first()
+
+            time_in = record.time_in if record.time_in else None
+            time_out = record.time_out if record.time_out else None
+
+           
+
             ws.append([
+                record.user.username,
                 record.user.first_name,
-                record.time_in or "",
-                record.time_out or "",
+                profile.course if profile and profile.course else "N/A",
+                profile.year_lvl if profile and profile.year_lvl else "N/A",
+                time_in or "25",
+                time_out or "25",
+               
             ])
 
         response = HttpResponse(
@@ -696,9 +708,10 @@ class DeleteEventView(APIView):
         
 
 class StudentsListView(generics.ListAPIView):
-    queryset = Profile.objects.select_related('user').all()
+    queryset = Profile.objects.select_related('user').filter(user__is_superuser=False)
     serializer_class = ProfileSerializer
     permission_classes = [AllowAny]
+
     
 class StudentUpdateView(generics.RetrieveUpdateAPIView):
     serializer_class = ProfileUpdateSerializer
@@ -712,7 +725,8 @@ class StudentUpdateView(generics.RetrieveUpdateAPIView):
     
 class AttendanceFilteredByProfileView(generics.ListAPIView):
     serializer_class = AttendanceRecordFilteredSerializer
-
+    permission_classes = [AllowAny]
+     
     def get_queryset(self):
         attendance_id = self.kwargs.get('attendance_id')
         year_lvl = self.request.query_params.get('year_lvl')

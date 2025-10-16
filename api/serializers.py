@@ -180,8 +180,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 
 class AttendanceRecordFilteredSerializer(serializers.ModelSerializer):
+    user_first_name = serializers.CharField(source='user.first_name', read_only=True)
+    user_last_name = serializers.CharField(source='user.last_name', read_only=True)
     user = UserProfileSerializer(source='user.profile', read_only=True)
 
     class Meta:
         model = AttendanceRecord
-        fields = ['id', 'user', 'time_in', 'time_out', 'timestamp']
+        fields = [
+            'id',
+            'user_first_name',
+            'user_last_name',
+            'user',
+            'time_in',
+            'time_out',
+            'timestamp'
+        ]
