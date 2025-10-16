@@ -10,7 +10,7 @@ from django.contrib.auth.models import User
 from rest_framework import permissions
 from django.contrib.auth import get_user_model
 User = get_user_model()
-from .serializers import AttendanceRecordFilteredSerializer, ProfileUpdateSerializer, EventsSerializer, AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
+from .serializers import UserSerializer, AttendanceRecordFilteredSerializer, ProfileUpdateSerializer, EventsSerializer, AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
 from django.core.files.storage import default_storage
 from .utils import extract_face_embedding
 from django.core.files.storage import default_storage
@@ -602,18 +602,25 @@ class TimeInExpireView(APIView):
         return Response({"message": "Time expired. Both is_time_in and is_time_out set to false."}, status=status.HTTP_200_OK)
 
 
-
-
 class ExportAttendanceExcelView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, attendance_id):
+        course = request.GET.get("course")
+        year_lvl = request.GET.get("year_lvl")
+
         try:
             attendance = Attendance.objects.get(id=attendance_id)
         except Attendance.DoesNotExist:
             return HttpResponse("Attendance not found.", status=404)
 
-        records = AttendanceRecord.objects.filter(attendance=attendance).select_related('user')
+        records = AttendanceRecord.objects.filter(attendance=attendance).select_related("user")
+
+        # ✅ Apply filters only if not "All"
+        if course and course != "All":
+            records = records.filter(user__profile__course=course)
+        if year_lvl and year_lvl != "All":
+            records = records.filter(user__profile__year_lvl=year_lvl)
 
         wb = Workbook()
         ws = wb.active
@@ -624,19 +631,13 @@ class ExportAttendanceExcelView(APIView):
         for record in records:
             profile = Profile.objects.filter(user=record.user).first()
 
-            time_in = record.time_in if record.time_in else None
-            time_out = record.time_out if record.time_out else None
-
-           
-
             ws.append([
                 record.user.username,
                 record.user.first_name,
                 profile.course if profile and profile.course else "N/A",
                 profile.year_lvl if profile and profile.year_lvl else "N/A",
-                time_in or "25",
-                time_out or "25",
-               
+                record.time_in or "Absent (Fine ₱25)",
+                record.time_out or "Absent (Fine ₱25)",
             ])
 
         response = HttpResponse(
@@ -687,17 +688,17 @@ class EventListCreateView(generics.ListCreateAPIView):
     queryset = Events.objects.all().order_by('date_started')
     serializer_class = EventsSerializer
     permission_classes = [AllowAny]
-    
+
 class EventDetailView(generics.RetrieveUpdateAPIView):
     queryset = Events.objects.all()
     serializer_class = EventsSerializer
     permission_classes = [AllowAny]
     lookup_field = 'id'
-    
+
 
 class DeleteEventView(APIView):
     permission_classes = [AllowAny]
-    
+
     def delete(self, request, eventId):
         try:
             event = Events.objects.get(id=eventId)
@@ -705,14 +706,14 @@ class DeleteEventView(APIView):
             return Response({"message": "Event deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
         except Events.DoesNotExist:
             return Response({"error": "Event not found."}, status=status.HTTP_404_NOT_FOUND)
-        
+
 
 class StudentsListView(generics.ListAPIView):
     queryset = Profile.objects.select_related('user').filter(user__is_superuser=False)
     serializer_class = ProfileSerializer
     permission_classes = [AllowAny]
 
-    
+
 class StudentUpdateView(generics.RetrieveUpdateAPIView):
     serializer_class = ProfileUpdateSerializer
     permission_classes = [AllowAny]
@@ -720,13 +721,13 @@ class StudentUpdateView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         user_id = self.kwargs['id']
         return Profile.objects.get(user__id=user_id)
-    
-    
-    
+
+
+
 class AttendanceFilteredByProfileView(generics.ListAPIView):
     serializer_class = AttendanceRecordFilteredSerializer
     permission_classes = [AllowAny]
-     
+
     def get_queryset(self):
         attendance_id = self.kwargs.get('attendance_id')
         year_lvl = self.request.query_params.get('year_lvl')
@@ -749,3 +750,36 @@ class AttendanceFilteredByProfileView(generics.ListAPIView):
             return Response({"detail": "Attendance not found."}, status=status.HTTP_404_NOT_FOUND)
 
         return super().list(request, *args, **kwargs)
+
+
+
+class DeleteUserView(APIView):
+    permission_classes = [AllowAny]
+
+    def delete(self, request, user_id):
+        user = get_object_or_404(User, id=user_id)
+        user.delete()
+        return Response({"detail": "User deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+
+class DeleteAttendanceView(APIView):
+    permission_classes = [AllowAny]
+
+    def delete(self, request, attendance_id):
+        attendance = get_object_or_404(Attendance, id=attendance_id)
+        attendance.delete()
+        return Response({"detail": "Attendance deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+    
+    
+class UserDetailView(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id)
+            serializer = UserSerializer(user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)    
