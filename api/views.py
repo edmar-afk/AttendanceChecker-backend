@@ -306,10 +306,12 @@ class TimeInAttendanceView(APIView):
             return Response({"detail": "User already timed in."}, status=status.HTTP_400_BAD_REQUEST)
 
         record.time_in = timezone.now().isoformat()
+        record.is_time_in = True  # SET TRUE HERE
         record.save()
 
         serializer = AttendanceRecordSerializer(record)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 
 
@@ -783,3 +785,6 @@ class UserDetailView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)    
+        
+        
+        TimeInAttendanceView

@@ -71,7 +71,8 @@ class AttendanceRecord(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     time_in = models.TextField(blank=True, null=True)
     time_out = models.TextField(blank=True, null=True)
-
+    is_time_in = models.BooleanField(default=False)
+    is_time_out = models.BooleanField(default=False)
 
 class Events(models.Model):
     event_name = models.TextField()
