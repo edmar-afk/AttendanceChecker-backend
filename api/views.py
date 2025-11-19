@@ -4,13 +4,13 @@ from rest_framework.permissions import AllowAny
 from rest_framework import status, generics
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .models import Profile, FingerprintGenerate, UserFace, Attendance, AttendanceRecord, Events
+from .models import Profile, FingerprintGenerate, UserFace, Attendance, AttendanceRecord, Events, HistoryLogs
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
 from rest_framework import permissions
 from django.contrib.auth import get_user_model
 User = get_user_model()
-from .serializers import UserSerializer, AttendanceRecordFilteredSerializer, ProfileUpdateSerializer, EventsSerializer, AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
+from .serializers import SingleAttendanceSerializer, HistoryLogsSerializer, SingleAttendanceRecordSerializer, UserSerializer, AttendanceRecordFilteredSerializer, ProfileUpdateSerializer, EventsSerializer, AttendanceRecordSerializer, AttendanceSerializer, RegisterSerializer, FingerprintGenerateSerializer, UserFaceSerializer, ProfileSerializer
 from django.core.files.storage import default_storage
 from .utils import extract_face_embedding
 from django.core.files.storage import default_storage
@@ -53,11 +53,9 @@ class FaceRegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
 
-        # Make sure the file is fully saved
         instance.face_image.open()
         instance.face_image.close()
 
-        # Extract embedding
         embedding = extract_face_embedding(instance.face_image.path)
         if embedding is not None:
             instance.embedding = embedding.tobytes()
@@ -66,6 +64,7 @@ class FaceRegisterView(generics.CreateAPIView):
             return Response({"message": "Face could not be detected"}, status=400)
 
         return Response({"id": instance.id, "name": instance.name})
+
 
 # --- FaceMatchView (Fix applied here) ---
 
@@ -203,12 +202,13 @@ class FingerprintGenerateCreateView(generics.CreateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ✅ Use the device_id and device_name sent by frontend
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(user=user)
 
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 
 
 
@@ -232,7 +232,7 @@ class AttendanceUploadView(generics.CreateAPIView):
         current_time = timezone.now()
         time_limit = current_time + timedelta(minutes=minutes)
 
-        serializer.save(
+        instance = serializer.save(
             host_id=user_id,
             time_limit=time_limit,
             is_active=True,
@@ -240,16 +240,19 @@ class AttendanceUploadView(generics.CreateAPIView):
             is_time_out=False,
         )
 
+        return instance
+
     def create(self, request, *args, **kwargs):
-        # Remove the auto-deactivate logic entirely
         mutable_data = request.data.copy()
         mutable_data.pop("host", None)
         mutable_data.pop("time_limit", None)
 
         serializer = self.get_serializer(data=mutable_data)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        instance = self.perform_create(serializer)
+
+        return Response(self.get_serializer(instance).data, status=status.HTTP_201_CREATED)
+
 
 
 
@@ -299,19 +302,21 @@ class TimeInAttendanceView(APIView):
 
         record, created = AttendanceRecord.objects.get_or_create(
             attendance=attendance,
-            user=user
+            user=user,
+            is_time_im=True
         )
 
-        if record.time_in:
+        # FIXED: Proper check (no accidental TRUE)
+        if record.is_time_in:
             return Response({"detail": "User already timed in."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ALWAYS SET TRUE
         record.time_in = timezone.now().isoformat()
-        record.is_time_in = True  # SET TRUE HERE
+        record.is_time_in = True
         record.save()
 
         serializer = AttendanceRecordSerializer(record)
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 
 
 
@@ -332,20 +337,26 @@ class TimeInAttendanceView(APIView):
     def post(self, request, attendance_id, user_id):
         device_id = request.data.get("device_id")
         if not device_id:
-            return Response({"error": "Device ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Device ID is required.", "debug_raw_data": request.data},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         fingerprint_exists = FingerprintGenerate.objects.filter(
-            user_id=user_id, device_id=device_id
+            user_id=user_id,
+            device_id=device_id
         ).exists()
 
         if not fingerprint_exists:
-            return Response({"error": "Unauthorized device or fingerprint not found."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "Unauthorized device or fingerprint not found.", "debug_raw_data": request.data},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         attendance = get_object_or_404(Attendance, id=attendance_id)
-
-        # Format the current date/time (local time)
         current_time = timezone.localtime(timezone.now()).strftime("%I:%M %p")
 
+        # Get or create record
         record, created = AttendanceRecord.objects.get_or_create(
             attendance=attendance,
             user_id=user_id,
@@ -353,10 +364,29 @@ class TimeInAttendanceView(APIView):
         )
 
         if not created:
-            return Response({"message": "User already timed in."}, status=status.HTTP_400_BAD_REQUEST)
+            # Update existing time_in
+            record.time_in = current_time
+            record.save()
+            serializer = AttendanceRecordSerializer(record)
+            return Response(
+                {
+                    "message": "Time in updated successfully.",
+                    "data": serializer.data,
+                    "debug_raw_data": request.data
+                },
+                status=status.HTTP_200_OK
+            )
 
+        # New record created
         serializer = AttendanceRecordSerializer(record)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                "success": True,
+                "data": serializer.data,
+                "debug_raw_data": request.data
+            },
+            status=status.HTTP_201_CREATED
+        )
 
 class TimeOutAttendanceView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -773,18 +803,85 @@ class DeleteAttendanceView(APIView):
         attendance = get_object_or_404(Attendance, id=attendance_id)
         attendance.delete()
         return Response({"detail": "Attendance deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
-    
-    
+
+
 class UserDetailView(APIView):
     permission_classes = [AllowAny]
-    
+
     def get(self, request, user_id):
         try:
             user = User.objects.get(id=user_id)
             serializer = UserSerializer(user)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)    
-        
-        
-        TimeInAttendanceView
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+class UserDeviceView(generics.RetrieveAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = FingerprintGenerateSerializer
+    lookup_url_kwarg = 'user_id'
+
+    def get_queryset(self):
+        user_id = self.kwargs.get(self.lookup_url_kwarg)
+        return FingerprintGenerate.objects.filter(user_id=user_id)
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        if not queryset.exists():
+            return Response(
+                {"detail": "No device found for this user."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+class SingleAttendanceRecordView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, attendance_id, user_id):
+        record = get_object_or_404(
+            AttendanceRecord,
+            attendance_id=attendance_id,
+            user_id=user_id
+        )
+        serializer = SingleAttendanceRecordSerializer(record)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
+class HistoryLogsListView(generics.ListAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = HistoryLogsSerializer
+
+    def get_queryset(self):
+        user_id = self.kwargs.get("user_id")
+        return HistoryLogs.objects.filter(user__id=user_id).order_by('-date')
+
+
+
+
+class HistoryLogsCreateView(generics.CreateAPIView):
+    serializer_class = HistoryLogsSerializer
+    permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        user_id = self.kwargs.get('user_id')
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class SingleAttendanceView(RetrieveAPIView):
+    queryset = Attendance.objects.all()
+    serializer_class = SingleAttendanceSerializer
+    lookup_url_kwarg = 'attendance_id'
+    permission_classes = [AllowAny]
